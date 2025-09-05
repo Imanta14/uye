@@ -9,54 +9,56 @@ from statsmodels.stats.diagnostic import het_arch
 import statsmodels.api as sm
 from scipy.stats import norm
 
-# --- Page Config ---
+# --- Page config ---
 st.set_page_config(page_title="ARIMA–GARCH–VaR Analyzer", layout="wide")
 
 # --- Custom CSS ---
-st.markdown(
-    """
-    <style>
-    /* Background lebih gelap */
-    .stApp {
-        background-color: #1e1e1e;
-        color: #f5f5f5;
-    }
+page_bg = """
+<style>
+/* Background gradient lebih gelap */
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(to right, #134e5e, #71b280);
+    color: black;
+}
+[data-testid="stHeader"] {
+    background: rgba(0,0,0,0);
+}
+[data-testid="stSidebar"] {
+    background: rgba(30,30,30,0.9);
+    border-radius: 10px;
+    padding: 15px;
+    color: white;
+}
+/* Tombol navigasi di sidebar */
+.sidebar-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin: 6px 0;
+    font-size: 14px;
+    font-weight: bold;
+    border: none;
+    border-radius: 6px;
+    text-align: center;
+    cursor: pointer;
+    text-decoration: none;
+    color: white !important;
+}
+.sidebar-btn.upload { background-color: #1d3557; }
+.sidebar-btn.arima { background-color: #457b9d; }
+.sidebar-btn.vol { background-color: #a8dadc; }
+.sidebar-btn.var { background-color: #e63946; }
+/* Box untuk teks */
+.custom-box {
+    background-color: #ffffffcc;
+    padding: 10px;
+    border-radius: 8px;
+    margin: 10px 0;
+}
+</style>
+"""
 
-    /* Sidebar navigation tombol */
-    div[data-baseweb="radio"] > div {
-        background-color: #2c2c2c;
-        border-radius: 8px;
-        padding: 6px;
-    }
-    div[data-baseweb="radio"] label {
-        color: white !important;
-        font-size: 14px !important;
-        font-weight: bold;
-    }
-
-    /* Tombol Run ARIMA Grid Search */
-    div.stButton > button:first-child {
-        background-color: #457b9d;
-        color: white !important;
-        font-weight: bold;
-        border-radius: 6px;
-        padding: 8px 16px;
-    }
-    div.stButton > button:hover {
-        background-color: #1d3557;
-        color: white !important;
-    }
-
-    /* Semua teks judul/subheader punya background berbeda */
-    h1, h2, h3 {
-        background-color: #2c2c2c;
-        padding: 6px;
-        border-radius: 6px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown(page_bg, unsafe_allow_html=True)
 
 st.title("📊 ARIMA – ARCH – GARCH – TGARCH with VaR")
 
@@ -65,8 +67,22 @@ def check_stationarity(series, signif=0.05):
     adf_result = adfuller(series.dropna())
     return adf_result[1] < signif, adf_result[1]
 
-# --- Sidebar Navigation ---
-menu = st.sidebar.radio("Navigation", ["Upload Data", "ARIMA Modeling", "Volatility Modeling", "Value at Risk (VaR)"])
+# --- Session State untuk Navigation ---
+if "menu" not in st.session_state:
+    st.session_state.menu = "Upload Data"
+
+# --- Sidebar Navigation dengan tombol ---
+st.sidebar.markdown("### 📌 Navigation")
+if st.sidebar.button("📂 Upload Data", key="btn1"):
+    st.session_state.menu = "Upload Data"
+if st.sidebar.button("🔮 ARIMA Modeling", key="btn2"):
+    st.session_state.menu = "ARIMA Modeling"
+if st.sidebar.button("📈 Volatility Modeling", key="btn3"):
+    st.session_state.menu = "Volatility Modeling"
+if st.sidebar.button("⚠️ Value at Risk (VaR)", key="btn4"):
+    st.session_state.menu = "Value at Risk (VaR)"
+
+menu = st.session_state.menu
 
 # ================= PAGE 1: UPLOAD DATA =================
 if menu == "Upload Data":
@@ -78,8 +94,9 @@ if menu == "Upload Data":
         if "Date" in data.columns:
             data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
             data.set_index("Date", inplace=True)
+            data.index = data.index.tz_localize(None)
 
-        st.write("📄 Data preview:")
+        st.markdown('<div class="custom-box">📄 Data preview:</div>', unsafe_allow_html=True)
         st.dataframe(data.head())
 
         # --- Filter tanggal ---
@@ -87,13 +104,21 @@ if menu == "Upload Data":
         min_date = data.index.min().date()
         max_date = data.index.max().date()
 
-        start_date = st.date_input("Select start date:", value=max_date.replace(year=max_date.year - 2),
-                                   min_value=min_date, max_value=max_date)
-        end_date = st.date_input("Select end date:", value=max_date,
-                                 min_value=min_date, max_value=max_date)
+        default_start = max_date.replace(year=max_date.year - 2)
 
-        # Hilangkan timezone di index
-        data.index = data.index.tz_localize(None)
+        start_date = st.date_input(
+            "Start Date:",
+            value=default_start,
+            min_value=min_date,
+            max_value=max_date
+        )
+
+        end_date = st.date_input(
+            "End Date:",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date
+        )
 
         # Konversi input jadi datetime
         start_date = pd.to_datetime(start_date)
@@ -107,102 +132,95 @@ if menu == "Upload Data":
         st.dataframe(data.head())
         st.write(f"Total rows: {len(data)}")
 
-        # Pilih hanya kolom numerik (misalnya Close/Harga)
+        # Pilih kolom harga
         numeric_cols = data.select_dtypes(include=[np.number]).columns
         column = st.selectbox("Select closing price column", numeric_cols)
         series = data[column].astype(float)
 
-        # Hitung return log
+        # Return log
         data['Return_log'] = np.log(series / series.shift(1))
         data = data.dropna()
         st.line_chart(data['Return_log'])
 
-        # Cek stasioneritas
+        # Stationarity test
         st.subheader("Stationarity Check (ADF Test)")
         stationary, pval = check_stationarity(data['Return_log'])
         diff_count = 0
         series_to_use = data['Return_log'].copy()
-
         while not stationary:
             diff_count += 1
             series_to_use = series_to_use.diff().dropna()
             stationary, pval = check_stationarity(series_to_use)
             st.write(f"Differencing ke-{diff_count} → p-value: {pval:.5f}")
-
         if diff_count == 0:
             st.success("✅ Data sudah stasioner")
         else:
             st.success(f"✅ Data stasioner setelah differencing {diff_count} kali")
 
-        # simpan ke session_state
+        # Simpan state
         st.session_state.data = data
         st.session_state.series_to_use = series_to_use
 
 # ================= PAGE 2: ARIMA MODELING =================
 elif menu == "ARIMA Modeling":
     if "series_to_use" not in st.session_state:
-        st.warning("⚠️ Please upload data first in 'Upload Data' page.")
+        st.warning("⚠️ Please upload data first.")
     else:
         series_to_use = st.session_state.series_to_use
-
         st.subheader("ARIMA Grid Search (AIC Comparison)")
         if "run_arima" not in st.session_state:
             st.session_state.run_arima = False
-
         if st.button("Run ARIMA Grid Search"):
             st.session_state.run_arima = True
-
         if st.session_state.run_arima:
             aic_results = []
-            p_values = range(0, 3)
-            d_values = range(0, 2)
-            q_values = range(0, 3)
-
-            for p in p_values:
-                for d in d_values:
-                    for q in q_values:
+            for p in range(0, 3):
+                for d in range(0, 2):
+                    for q in range(0, 3):
                         try:
                             model = ARIMA(series_to_use, order=(p, d, q)).fit()
-                            aic_results.append({
-                                "order": (p, d, q),
-                                "AIC": model.aic,
-                                "BIC": model.bic
-                            })
+                            aic_results.append({"order": (p, d, q), "AIC": model.aic, "BIC": model.bic})
                         except:
                             continue
-
             results_df = pd.DataFrame(aic_results).sort_values("AIC")
             st.dataframe(results_df)
-
             best_order = results_df.iloc[0]["order"]
             st.success(f"✅ Best ARIMA order: {best_order}")
-
             best_model = ARIMA(series_to_use, order=best_order).fit()
             residuals = pd.Series(best_model.resid, index=series_to_use.index)
             st.session_state.residuals = residuals
             st.session_state.best_model = best_model
-
-            st.subheader("Residuals of Best ARIMA Model")
             st.line_chart(residuals)
 
 # ================= PAGE 3: VOLATILITY MODELING =================
 elif menu == "Volatility Modeling":
     if "residuals" not in st.session_state:
-        st.warning("⚠️ Please run ARIMA first in 'ARIMA Modeling' page.")
+        st.warning("⚠️ Please run ARIMA first.")
     else:
         residuals = st.session_state.residuals
+        results = []
 
+        # --- ARCH Modeling ---
         st.subheader("ARCH Modeling")
         model_arch = arch_model(residuals, mean="Zero", vol="ARCH", p=1)
         fit_arch = model_arch.fit(disp="off")
         st.line_chart(fit_arch.conditional_volatility, use_container_width=True)
 
+        # ARCH Test
+        arch_test = het_arch(residuals)
+        st.write(f"ARCH Test p-value: {arch_test[1]:.5f}")
+        if arch_test[1] < 0.05:
+            st.success("✅ Heteroskedastisitas terdeteksi → lanjut GARCH")
+        else:
+            st.info("Data tidak menunjukkan ARCH effect yang signifikan.")
+
+        # --- GARCH Modeling ---
         st.subheader("GARCH Modeling")
         model_garch = arch_model(residuals, mean="Zero", vol="GARCH", p=1, q=1)
         fit_garch = model_garch.fit(disp="off")
         st.line_chart(fit_garch.conditional_volatility, use_container_width=True)
 
-        # --- Uji Sign Bias ---
+        # --- Sign Bias Test ---
         st.subheader("Sign Bias Test (for asymmetry)")
         std_resid = fit_garch.resid / fit_garch.conditional_volatility
         Y = std_resid**2
@@ -212,34 +230,41 @@ elif menu == "Volatility Modeling":
 
         X = pd.DataFrame({"const": 1, "D_neg": D_neg})
         ols_model = sm.OLS(Y, X).fit(cov_type="HC1")
-        if ols_model.pvalues["D_neg"] < 0.05:
+
+        # Tampilkan hasil inti saja
+        p_value = ols_model.pvalues["D_neg"]
+        coef = ols_model.params["D_neg"]
+
+        st.write(f"Koefisien D_neg: {coef:.4f}")
+        st.write(f"P-Value: {p_value:.5f}")
+
+        if p_value < 0.05:
             st.warning("❗ Sign Bias effect terdeteksi → lanjut TGARCH")
         else:
             st.info("Tidak ada sign bias signifikan → TGARCH opsional")
 
-        st.subheader("TGARCH Modeling")
-        model_tgarch = arch_model(residuals, vol="GARCH", p=1, o=1, q=1, dist="t")
-        fit_tgarch = model_tgarch.fit(disp="off")
-        st.line_chart(fit_tgarch.conditional_volatility, use_container_width=True)
+        # --- TGARCH jika perlu ---
+        if ols_model.pvalues["D_neg"] < 0.05:
+            st.warning("❗ Sign Bias effect terdeteksi → lanjut TGARCH")
+            st.subheader("TGARCH Modeling")
+            model_tgarch = arch_model(residuals, vol="GARCH", p=1, o=1, q=1, dist="t")
+            fit_tgarch = model_tgarch.fit(disp="off")
+            st.line_chart(fit_tgarch.conditional_volatility, use_container_width=True)
+            models = {"ARCH(1)": fit_arch, "GARCH(1,1)": fit_garch, "TGARCH(1,1)": fit_tgarch}
+        else:
+            st.info("Tidak ada sign bias signifikan → TGARCH tidak diperlukan")
+            models = {"ARCH(1)": fit_arch, "GARCH(1,1)": fit_garch}
 
         # --- Bandingkan model ---
         st.subheader("Model Comparison (AIC & LogLik)")
-        models = {"ARCH(1)": fit_arch, "GARCH(1,1)": fit_garch, "TGARCH(1,1)": fit_tgarch}
-        results = [{"Model": name, "AIC": fit.aic, "LogLik": fit.loglikelihood} for name, fit in models.items()]
+        for name, fit in models.items():
+            results.append({"Model": name, "AIC": fit.aic, "LogLik": fit.loglikelihood})
         results_df = pd.DataFrame(results).sort_values(by=["AIC", "LogLik"], ascending=[True, False])
         st.dataframe(results_df)
 
         best_model_name = results_df.iloc[0]["Model"]
         st.success(f"📌 Best Model Selected: {best_model_name}")
-
-        if best_model_name == "ARCH(1)":
-            cond_vol = fit_arch.conditional_volatility
-        elif best_model_name == "GARCH(1,1)":
-            cond_vol = fit_garch.conditional_volatility
-        else:
-            cond_vol = fit_tgarch.conditional_volatility
-
-        st.session_state.cond_vol = cond_vol
+        st.session_state.cond_vol = models[best_model_name].conditional_volatility
 
 # ================= PAGE 4: VALUE AT RISK =================
 elif menu == "Value at Risk (VaR)":
@@ -252,21 +277,29 @@ elif menu == "Value at Risk (VaR)":
 
         st.subheader("Value at Risk (VaR) from Best Model")
 
+        # Input nilai portofolio
         preset_values = [10_000_000, 50_000_000, 100_000_000, 500_000_000]
         selected_preset = st.selectbox("Choose preset portfolio value:", preset_values)
-        custom_value = st.number_input("Or enter custom portfolio value (Rp):", min_value=1_000_000, value=selected_preset)
+        custom_value = st.number_input("Or enter custom portfolio value (Rp):", 
+                                       min_value=1_000_000, value=selected_preset)
         W = custom_value
 
+        # Confidence level
         conf_level = st.selectbox("Confidence Level", [0.90, 0.95, 0.99], index=1)
         alpha = 1 - conf_level
         Z_alpha = norm.ppf(1 - alpha)
 
+        # Horizon prediksi
         horizon = st.number_input("Prediction Horizon (days)", min_value=1, max_value=30, value=5)
 
+        # Forecast return dari ARIMA
         forecast = best_model.get_forecast(steps=horizon)
         predicted_returns = forecast.predicted_mean.values
+
+        # Ambil volatilitas terakhir sesuai horizon
         predicted_vols = cond_vol.tail(horizon).values
 
+        # Hitung VaR tiap hari
         var_values = []
         for i in range(horizon):
             R_hat = predicted_returns[i]
@@ -274,6 +307,7 @@ elif menu == "Value at Risk (VaR)":
             VaR_t = W * (R_hat - Z_alpha * sigma)
             var_values.append(VaR_t)
 
+        # Buat DataFrame hasil
         results_df = pd.DataFrame({
             "Day": [f"H+{i+1}" for i in range(horizon)],
             "Predicted_Return": predicted_returns,
@@ -283,4 +317,10 @@ elif menu == "Value at Risk (VaR)":
 
         st.write(f"📊 Estimated {horizon}-Day VaR ({int(conf_level*100)}% confidence):")
         st.dataframe(results_df)
-        st.line_chart(results_df.set_index("Day")[["VaR", "Volatility"]])
+
+        # --- Visualisasi dipisah ---
+        st.subheader("📉 VaR Over Prediction Horizon")
+        st.line_chart(results_df.set_index("Day")["VaR"])
+
+        st.subheader("📈 Volatility Over Prediction Horizon")
+        st.line_chart(results_df.set_index("Day")["Volatility"])
