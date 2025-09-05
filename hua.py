@@ -13,88 +13,50 @@ from scipy.stats import norm
 st.set_page_config(page_title="ARIMA–GARCH–VaR Analyzer", layout="wide")
 
 # --- Custom CSS ---
-page_bg = """
-<style>
-/* Background gradient lebih gelap */
-[data-testid="stAppViewContainer"] {
-    background: linear-gradient(to right, #134e5e, #71b280);
-    color: black;
-}
-[data-testid="stHeader"] {
-    background: rgba(0,0,0,0);
-}
-[data-testid="stSidebar"] {
-    background: rgba(30,30,30,0.9);
-    border-radius: 10px;
-    padding: 15px;
-    color: white;
-}
+st.markdown(
+    """
+    <style>
+    /* Background lebih gelap */
+    .stApp {
+        background-color: #1e1e1e;
+        color: #f5f5f5;
+    }
 
-/* Tombol navigasi di sidebar */
-.sidebar-btn {
-    display: block;
-    width: 100%;
-    padding: 10px;
-    margin: 6px 0;
-    font-size: 14px;
-    font-weight: bold;
-    border: none;
-    border-radius: 6px;
-    text-align: center;
-    cursor: pointer;
-    text-decoration: none;
-    color: white !important;
-}
-.sidebar-btn.upload { background-color: #1d3557; }
-.sidebar-btn.arima { background-color: #457b9d; }
-.sidebar-btn.vol { background-color: #a8dadc; color: black !important; }
-.sidebar-btn.var { background-color: #e63946; }
+    /* Sidebar navigation tombol */
+    div[data-baseweb="radio"] > div {
+        background-color: #2c2c2c;
+        border-radius: 8px;
+        padding: 6px;
+    }
+    div[data-baseweb="radio"] label {
+        color: white !important;
+        font-size: 14px !important;
+        font-weight: bold;
+    }
 
-/* Box untuk teks */
-.custom-box {
-    background-color: #ffffffcc;
-    padding: 10px;
-    border-radius: 8px;
-    margin: 10px 0;
-}
+    /* Tombol Run ARIMA Grid Search */
+    div.stButton > button:first-child {
+        background-color: #457b9d;
+        color: white !important;
+        font-weight: bold;
+        border-radius: 6px;
+        padding: 8px 16px;
+    }
+    div.stButton > button:hover {
+        background-color: #1d3557;
+        color: white !important;
+    }
 
-/* Sidebar navigation radio button */
-div[data-baseweb="radio"] > div {
-    background-color: #2c2c2c;
-    border-radius: 8px;
-    padding: 6px;
-}
-div[data-baseweb="radio"] label {
-    color: white !important;
-    font-size: 14px !important;
-    font-weight: bold;
-}
-
-/* Tombol Run ARIMA Grid Search */
-div.stButton > button:first-child {
-    background-color: #457b9d;
-    color: white !important;
-    font-weight: bold;
-    border-radius: 6px;
-    padding: 8px 16px;
-}
-div.stButton > button:hover {
-    background-color: #1d3557;
-    color: white !important;
-}
-
-/* Semua teks judul/subheader punya background berbeda */
-h1, h2, h3 {
-    background-color: #2c2c2c;
-    padding: 6px;
-    border-radius: 6px;
-}
-</style>
-"""
-
-# Apply CSS
-st.markdown(page_bg, unsafe_allow_html=True)
-
+    /* Semua teks judul/subheader punya background berbeda */
+    h1, h2, h3 {
+        background-color: #2c2c2c;
+        padding: 6px;
+        border-radius: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 st.title("📊 ARIMA – ARCH – GARCH – TGARCH with VaR")
 
@@ -290,29 +252,21 @@ elif menu == "Value at Risk (VaR)":
 
         st.subheader("Value at Risk (VaR) from Best Model")
 
-        # Input nilai portofolio
         preset_values = [10_000_000, 50_000_000, 100_000_000, 500_000_000]
         selected_preset = st.selectbox("Choose preset portfolio value:", preset_values)
-        custom_value = st.number_input("Or enter custom portfolio value (Rp):", 
-                                       min_value=1_000_000, value=selected_preset)
+        custom_value = st.number_input("Or enter custom portfolio value (Rp):", min_value=1_000_000, value=selected_preset)
         W = custom_value
 
-        # Confidence level
         conf_level = st.selectbox("Confidence Level", [0.90, 0.95, 0.99], index=1)
         alpha = 1 - conf_level
         Z_alpha = norm.ppf(1 - alpha)
 
-        # Horizon prediksi
         horizon = st.number_input("Prediction Horizon (days)", min_value=1, max_value=30, value=5)
 
-        # Forecast return dari ARIMA
         forecast = best_model.get_forecast(steps=horizon)
         predicted_returns = forecast.predicted_mean.values
-
-        # Ambil volatilitas terakhir sesuai horizon
         predicted_vols = cond_vol.tail(horizon).values
 
-        # Hitung VaR tiap hari
         var_values = []
         for i in range(horizon):
             R_hat = predicted_returns[i]
@@ -320,7 +274,6 @@ elif menu == "Value at Risk (VaR)":
             VaR_t = W * (R_hat - Z_alpha * sigma)
             var_values.append(VaR_t)
 
-        # Buat DataFrame hasil
         results_df = pd.DataFrame({
             "Day": [f"H+{i+1}" for i in range(horizon)],
             "Predicted_Return": predicted_returns,
@@ -330,10 +283,4 @@ elif menu == "Value at Risk (VaR)":
 
         st.write(f"📊 Estimated {horizon}-Day VaR ({int(conf_level*100)}% confidence):")
         st.dataframe(results_df)
-
-        # --- Visualisasi dipisah ---
-        st.subheader("📉 VaR Over Prediction Horizon")
-        st.line_chart(results_df.set_index("Day")["VaR"])
-
-        st.subheader("📈 Volatility Over Prediction Horizon")
-        st.line_chart(results_df.set_index("Day")["Volatility"])
+        st.line_chart(results_df.set_index("Day")[["VaR", "Volatility"]])
