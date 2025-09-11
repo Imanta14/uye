@@ -174,9 +174,9 @@ elif menu == "ARIMA Modeling":
             st.session_state.run_arima = True
         if st.session_state.run_arima:
             aic_results = []
-            for p in range(0, 3):
+            for p in range(1, 3):
                 for d in range(0, 2):
-                    for q in range(0, 3):
+                    for q in range(1, 3):
                         try:
                             model = ARIMA(series_to_use, order=(p, d, q)).fit()
                             aic_results.append({"order": (p, d, q), "AIC": model.aic, "BIC": model.bic})
@@ -200,19 +200,20 @@ elif menu == "Volatility Modeling":
         residuals = st.session_state.residuals
         results = []
 
+        # ARCH Test
+        arch_test = het_arch(residuals)
+        st.write(f"ARCH Test p-value: {arch_test[1]:.5f}")
+        if arch_test[1] < 0.05:
+            st.success("✅ Heteroskedastisitas terdeteksi → lanjut ARCH/GARCH")
+        else:
+            st.info("Data tidak menunjukkan ARCH effect yang signifikan.")
+
+
         # --- ARCH Modeling ---
         st.subheader("ARCH Modeling")
         model_arch = arch_model(residuals, mean="Zero", vol="ARCH", p=1)
         fit_arch = model_arch.fit(disp="off")
         st.line_chart(fit_arch.conditional_volatility, use_container_width=True)
-
-        # ARCH Test
-        arch_test = het_arch(residuals)
-        st.write(f"ARCH Test p-value: {arch_test[1]:.5f}")
-        if arch_test[1] < 0.05:
-            st.success("✅ Heteroskedastisitas terdeteksi → lanjut GARCH")
-        else:
-            st.info("Data tidak menunjukkan ARCH effect yang signifikan.")
 
         # --- GARCH Modeling ---
         st.subheader("GARCH Modeling")
@@ -220,40 +221,50 @@ elif menu == "Volatility Modeling":
         fit_garch = model_garch.fit(disp="off")
         st.line_chart(fit_garch.conditional_volatility, use_container_width=True)
 
-        # --- Sign Bias Test ---
-        st.subheader("Sign Bias Test (for asymmetry)")
-        std_resid = fit_garch.resid / fit_garch.conditional_volatility
-        Y = std_resid**2
-        lagged_resid = std_resid.shift(1).dropna()
-        Y = Y.iloc[1:]
-        D_neg = (lagged_resid < 0).astype(int)
 
-        X = pd.DataFrame({"const": 1, "D_neg": D_neg})
-        ols_model = sm.OLS(Y, X).fit(cov_type="HC1")
+        # --- Sign Bias Test untuk ARCH dan GARCH ---
+        def sign_bias_test(fit_model, model_name="Model"):
+            std_resid = fit_model.resid / fit_model.conditional_volatility
+            Y = std_resid**2
+            lagged_resid = std_resid.shift(1).dropna()
+            Y = Y.iloc[1:]
+            D_neg = (lagged_resid < 0).astype(int)
 
-        # Tampilkan hasil inti saja
-        p_value = ols_model.pvalues["D_neg"]
-        coef = ols_model.params["D_neg"]
+            X = pd.DataFrame({"const": 1, "D_neg": D_neg})
+            ols_model = sm.OLS(Y, X).fit(cov_type="HC1")
 
-        st.write(f"Koefisien D_neg: {coef:.4f}")
-        st.write(f"P-Value: {p_value:.5f}")
+            p_value = ols_model.pvalues["D_neg"]
+            coef = ols_model.params["D_neg"]
 
-        if p_value < 0.05:
-            st.warning("❗ Sign Bias effect terdeteksi → lanjut TGARCH")
-        else:
-            st.info("Tidak ada sign bias signifikan → TGARCH opsional")
+            st.subheader(f"Sign Bias Test - {model_name}")
+            st.write(f"Koefisien D_neg: {coef:.4f}")
+            st.write(f"P-Value: {p_value:.5f}")
+
+            return p_value < 0.05  # True kalau ada sign bias
+
+        # --- Jalankan uji sign bias untuk ARCH dan GARCH ---
+        arch_bias = sign_bias_test(fit_arch, "ARCH(1)")
+        garch_bias = sign_bias_test(fit_garch, "GARCH(1,1)")
 
         # --- TGARCH jika perlu ---
-        if ols_model.pvalues["D_neg"] < 0.05:
-            st.warning("❗ Sign Bias effect terdeteksi → lanjut TGARCH")
+        if arch_bias or garch_bias:
+            st.warning("❗ Sign Bias effect terdeteksi pada salah satu model → lanjut TGARCH")
             st.subheader("TGARCH Modeling")
             model_tgarch = arch_model(residuals, vol="GARCH", p=1, o=1, q=1, dist="t")
             fit_tgarch = model_tgarch.fit(disp="off")
+
             st.line_chart(fit_tgarch.conditional_volatility, use_container_width=True)
-            models = {"ARCH(1)": fit_arch, "GARCH(1,1)": fit_garch, "TGARCH(1,1)": fit_tgarch}
+            models = {
+                "ARCH(1)": fit_arch,
+                "GARCH(1,1)": fit_garch,
+                "TGARCH(1,1)": fit_tgarch
+            }
         else:
-            st.info("Tidak ada sign bias signifikan → TGARCH tidak diperlukan")
-            models = {"ARCH(1)": fit_arch, "GARCH(1,1)": fit_garch}
+            st.info("Tidak ada sign bias signifikan pada ARCH maupun GARCH → TGARCH tidak diperlukan")
+            models = {
+                "ARCH(1)": fit_arch,
+                "GARCH(1,1)": fit_garch
+            }
 
         # --- Bandingkan model ---
         st.subheader("Model Comparison (AIC & LogLik)")
